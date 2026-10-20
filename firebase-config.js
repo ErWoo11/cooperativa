@@ -31,6 +31,27 @@ const firebaseConfig = {
 };
 
 // ============================================================
+// CONFIGURACIÓN DEL SUPERADMINISTRADOR
+// ============================================================
+//
+// El superadmin es quien crea los colegios, las clases y
+// asigna a los responsables (admin de cada clase).
+//
+// - Si SUPERADMIN_PASSWORD está VACÍO: la PRIMERA vez que
+//   entres al panel superadmin (?superadmin=1), se te pedirá
+//   crear una contraseña. Esa contraseña se guardará hasheada.
+// - Si prefieres fijar una contraseña desde aquí, ponla en
+//   SUPERADMIN_PASSWORD y se usará esa (sin posibilidad de
+//   cambiarla desde el panel).
+//
+// Acceso al panel: añade ?superadmin=1 a la URL, p. ej.:
+//   http://localhost:8000/?superadmin=1
+//
+// ============================================================
+
+const SUPERADMIN_PASSWORD = "";
+
+// ============================================================
 // NO TOCAR NADA DE AQUÍ PARA ABAJO
 // ============================================================
 
@@ -44,3 +65,4 @@ const FIREBASE_HABILITADO =
 // Exportar para uso global
 window.FIREBASE_CONFIG = FIREBASE_CONFIG;
 window.FIREBASE_HABILITADO = FIREBASE_HABILITADO;
+window.SUPERADMIN_PASSWORD = SUPERADMIN_PASSWORD;

@@ -551,6 +551,7 @@ function getQueryParams() {
   return {
     classCode: params.get("c") || "",
     isCreate: params.get("create") === "1",
+    isSuperadmin: params.get("superadmin") === "1",
   };
 }
 
@@ -568,7 +569,43 @@ function navigate(path) {
 window.addEventListener("popstate", handleRouteChange);
 
 function handleRouteChange() {
-  const { classCode, isCreate } = getQueryParams();
+  const { classCode, isCreate, isSuperadmin } = getQueryParams();
+
+  // Limpieza de dashboard si salimos
+  const cleanupEvent = new CustomEvent("coop:cleanup");
+  window.dispatchEvent(cleanupEvent);
+
+  // Ruta del superadmin (tiene prioridad)
+  if (isSuperadmin) {
+    if (typeof window.initSuperadmin === "function") {
+      window.initSuperadmin();
+    } else {
+      // superadmin.js no cargado todavía
+      document.body.innerHTML = `
+        <div class="loading-screen">
+          <div class="spinner spinner-lg"></div>
+          <p>Cargando panel superadmin…</p>
+        </div>
+      `;
+      setTimeout(() => {
+        if (typeof window.initSuperadmin === "function") {
+          window.initSuperadmin();
+        } else {
+          document.body.innerHTML = `
+            <div class="success-screen">
+              <div class="success-card">
+                <div class="success-icon" style="background-color: var(--rojo-100); color: var(--rojo-700);">!</div>
+                <h2>No se pudo cargar el panel superadmin</h2>
+                <p class="description">Asegúrate de que el archivo <code>superadmin.js</code> está presente en la carpeta y se carga en <code>index.html</code>.</p>
+                <button class="btn btn-primary" onclick="navigate('/')">Volver al inicio</button>
+              </div>
+            </div>
+          `;
+        }
+      }, 1000);
+    }
+    return;
+  }
 
   if (isCreate) {
     renderCreateClass();
@@ -703,7 +740,12 @@ function renderLanding() {
       <footer class="app-footer">
         <div class="container app-footer-inner">
           <div>Cooperativa Escolar · Hecho con HTML, CSS y Firestore</div>
-          <div id="mode-indicator">${window.FIREBASE_HABILITADO ? "Conectado a Firestore" : "Modo demo (datos locales)"}</div>
+          <div id="mode-indicator">
+            ${window.FIREBASE_HABILITADO ? "Conectado a Firestore" : "Modo demo (datos locales)"}
+            <button class="btn btn-ghost btn-sm" style="margin-left: 0.5rem; padding: 0.125rem 0.5rem; font-size: 0.7rem;" onclick="navigate('/?superadmin=1')" title="Acceso al panel del superadmin">
+              ${ICONS.shield} <span class="hide-mobile">Admin</span>
+            </button>
+          </div>
         </div>
       </footer>
     </div>

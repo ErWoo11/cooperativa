@@ -14,6 +14,7 @@
   <meta property="og:locale" content="es_ES" />
 
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="superadmin.css" />
 
   <!-- Chart.js desde CDN (cargado bajo demanda en app.js) -->
 </head>
@@ -23,7 +24,10 @@
   <!-- 1. Configuración editable de Firebase (lo primero que carga) -->
   <script src="firebase-config.js"></script>
 
-  <!-- 2. Lógica principal de la aplicación -->
+  <!-- 2. Lógica principal de la aplicación (público + admin de clase) -->
   <script src="app.js"></script>
+
+  <!-- 3. Panel del superadmin (carga diferida: solo cuando se accede a ?superadmin=1) -->
+  <script src="superadmin.js"></script>
 </body>
 </html>
