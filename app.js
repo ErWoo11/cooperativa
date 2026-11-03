@@ -6,32 +6,81 @@
 // Cargar Firebase desde CDN si está configurado
 let firebaseApp = null;
 let firestore = null;
+let firebaseReadyPromise = null;
+let firebaseReadyResolve = null;
 
-if (window.FIREBASE_HABILITADO) {
-  // Firebase v10+ desde CDN (ES module)
-  // Lo importamos dinámicamente
-  import(
-    "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js"
-  ).then(async (firebaseAppModule) => {
-    const firebaseAppInit = firebaseAppModule.initializeApp;
-    firebaseApp = firebaseAppInit(window.FIREBASE_CONFIG);
-
-    const firestoreModule = await import(
-      "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
-    );
-    firestore = firestoreModule.getFirestore(firebaseApp);
-
-    // Avisar a la app que Firebase está listo
-    document.dispatchEvent(new CustomEvent("firebase-ready"));
-  }).catch((err) => {
-    console.error("Error cargando Firebase:", err);
-    showToast(
-      "No se pudo cargar Firebase",
-      "Verifica tu conexión a internet. Mientras tanto se usa el modo demo.",
-      "warning"
-    );
+// Promesa que se resuelve cuando Firebase está listo (o se rechaza si falla).
+// Las funciones de base de datos esperan a esta promesa antes de usar Firestore.
+if (window.FIREBASE_HABILITADO && window.FIREBASE_CONFIG) {
+  firebaseReadyPromise = new Promise((resolve, reject) => {
+    firebaseReadyResolve = resolve;
+    // Timeout: si Firebase no carga en 10s, rechazamos y pasamos a demo
+    setTimeout(() => {
+      if (!firestore) {
+        reject(new Error("Timeout cargando Firebase"));
+      }
+    }, 10000);
   });
+
+  try {
+    import(
+      "https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js"
+    ).then(async (firebaseAppModule) => {
+      const firebaseAppInit = firebaseAppModule.initializeApp;
+      firebaseApp = firebaseAppInit(window.FIREBASE_CONFIG);
+
+      const firestoreModule = await import(
+        "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+      );
+      firestore = firestoreModule.getFirestore(firebaseApp);
+
+      console.log(
+        "%c✓ Firestore inicializado correctamente",
+        "color: #047857; font-weight: bold;"
+      );
+
+      // Avisar a la app que Firebase está listo
+      document.dispatchEvent(new CustomEvent("firebase-ready"));
+      if (firebaseReadyResolve) firebaseReadyResolve(firestore);
+    }).catch((err) => {
+      console.error("Error cargando Firebase:", err);
+      window.FIREBASE_HABILITADO = false;
+      if (firebaseReadyResolve) firebaseReadyResolve(null);
+      if (typeof showToast === "function") {
+        showToast(
+          "No se pudo cargar Firebase",
+          "Se usará el modo demo. Revisa la consola.",
+          "warning"
+        );
+      }
+    });
+  } catch (err) {
+    console.error("Error inicializando Firebase:", err);
+    window.FIREBASE_HABILITADO = false;
+    if (firebaseReadyResolve) firebaseReadyResolve(null);
+  }
+} else {
+  // No hay Firebase configurado: promesa resuelta con null = modo demo
+  firebaseReadyPromise = Promise.resolve(null);
 }
+
+// Función auxiliar: espera a que Firebase esté listo (o devuelve null si no hay)
+async function awaitFirestore() {
+  if (!window.FIREBASE_HABILITADO) return null;
+  if (firestore) return firestore;
+  if (firebaseReadyPromise) {
+    try {
+      await firebaseReadyPromise;
+    } catch {
+      return null;
+    }
+  }
+  return firestore;
+}
+
+// Exponer para que superadmin.js pueda usarla
+window.awaitFirestore = awaitFirestore;
+window.getFirestoreInstance = () => firestore;
 
 // ============================================================
 // CONSTANTES Y CONFIG
@@ -236,10 +285,11 @@ function subscribeDemo(pattern, cb) {
 
 async function getClass(code) {
   const normalized = code.trim().toUpperCase();
+  const fs = await awaitFirestore();
 
-  if (window.FIREBASE_HABILITADO && firestore) {
+  if (fs) {
     const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDoc(doc(firestore, "classes", normalized));
+    const snap = await getDoc(doc(fs, "classes", normalized));
     if (!snap.exists()) return null;
     const data = snap.data();
     return {
@@ -283,9 +333,10 @@ async function createClass(data) {
     throw new Error(`El código ${code} ya existe. Prueba con otro.`);
   }
 
-  if (window.FIREBASE_HABILITADO && firestore) {
+  const fs = await awaitFirestore();
+  if (fs) {
     const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await setDoc(doc(firestore, "classes", code), {
+    await setDoc(doc(fs, "classes", code), {
       ...classInfo,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -301,10 +352,25 @@ async function createClass(data) {
 function subscribeToClass(code, cb) {
   const normalized = code.trim().toUpperCase();
 
-  if (window.FIREBASE_HABILITADO && firestore) {
-    let unsub = null;
+  // Si Firebase no está configurado, modo demo inmediato
+  if (!window.FIREBASE_HABILITADO) {
+    const fetch = () => cb(getDemoItem(`class_${normalized}`));
+    fetch();
+    return subscribeDemo(`class_${normalized}`, fetch);
+  }
+
+  // Esperar a Firestore y luego suscribirse
+  let unsub = null;
+  awaitFirestore().then((fs) => {
+    if (!fs) {
+      // Firebase no disponible, usar demo
+      const fetch = () => cb(getDemoItem(`class_${normalized}`));
+      fetch();
+      subscribeDemo(`class_${normalized}`, fetch);
+      return;
+    }
     import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ doc, onSnapshot }) => {
-      unsub = onSnapshot(doc(firestore, "classes", normalized), (snap) => {
+      unsub = onSnapshot(doc(fs, "classes", normalized), (snap) => {
         if (!snap.exists()) { cb(null); return; }
         const data = snap.data();
         cb({
@@ -322,22 +388,38 @@ function subscribeToClass(code, cb) {
         });
       }, () => cb(null));
     });
-    return () => unsub && unsub();
-  }
-
-  const fetch = () => cb(getDemoItem(`class_${normalized}`));
-  fetch();
-  return subscribeDemo(`class_${normalized}`, fetch);
+  });
+  return () => unsub && unsub();
 }
 
 function subscribeToTransactions(classCode, cb) {
   const normalized = classCode.trim().toUpperCase();
 
-  if (window.FIREBASE_HABILITADO && firestore) {
-    let unsub = null;
+  if (!window.FIREBASE_HABILITADO) {
+    const fetch = () => {
+      const all = getDemoItem(`transactions_${normalized}`) || [];
+      all.sort((a, b) => b.date - a.date);
+      cb(all);
+    };
+    fetch();
+    return subscribeDemo(`transactions_${normalized}`, fetch);
+  }
+
+  let unsub = null;
+  awaitFirestore().then((fs) => {
+    if (!fs) {
+      const fetch = () => {
+        const all = getDemoItem(`transactions_${normalized}`) || [];
+        all.sort((a, b) => b.date - a.date);
+        cb(all);
+      };
+      fetch();
+      subscribeDemo(`transactions_${normalized}`, fetch);
+      return;
+    }
     import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ collection, query, orderBy, onSnapshot }) => {
       const q = query(
-        collection(firestore, "classes", normalized, "transactions"),
+        collection(fs, "classes", normalized, "transactions"),
         orderBy("date", "desc")
       );
       unsub = onSnapshot(q, (snap) => {
@@ -361,16 +443,8 @@ function subscribeToTransactions(classCode, cb) {
         cb(list);
       }, () => cb([]));
     });
-    return () => unsub && unsub();
-  }
-
-  const fetch = () => {
-    const all = getDemoItem(`transactions_${normalized}`) || [];
-    all.sort((a, b) => b.date - a.date);
-    cb(all);
-  };
-  fetch();
-  return subscribeDemo(`transactions_${normalized}`, fetch);
+  });
+  return () => unsub && unsub();
 }
 
 async function addTransaction(classCode, data) {
@@ -391,9 +465,10 @@ async function addTransaction(classCode, data) {
     createdAt: now,
   };
 
-  if (window.FIREBASE_HABILITADO && firestore) {
+  const fs = await awaitFirestore();
+  if (fs) {
     const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await addDoc(collection(firestore, "classes", normalized, "transactions"), {
+    await addDoc(collection(fs, "classes", normalized, "transactions"), {
       ...tx,
       date: new Date(tx.date),
       createdAt: serverTimestamp(),
@@ -410,12 +485,13 @@ async function addTransaction(classCode, data) {
 
 async function updateTransaction(classCode, txId, updates) {
   const normalized = classCode.trim().toUpperCase();
+  const fs = await awaitFirestore();
 
-  if (window.FIREBASE_HABILITADO && firestore) {
+  if (fs) {
     const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
     const payload = { ...updates };
     if (updates.date) payload.date = new Date(updates.date);
-    await updateDoc(doc(firestore, "classes", normalized, "transactions", txId), payload);
+    await updateDoc(doc(fs, "classes", normalized, "transactions", txId), payload);
     return;
   }
 
@@ -429,10 +505,11 @@ async function updateTransaction(classCode, txId, updates) {
 
 async function deleteTransaction(classCode, txId) {
   const normalized = classCode.trim().toUpperCase();
+  const fs = await awaitFirestore();
 
-  if (window.FIREBASE_HABILITADO && firestore) {
+  if (fs) {
     const { doc, deleteDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await deleteDoc(doc(firestore, "classes", normalized, "transactions", txId));
+    await deleteDoc(doc(fs, "classes", normalized, "transactions", txId));
     return;
   }
 

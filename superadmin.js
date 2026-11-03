@@ -77,9 +77,10 @@ async function getSuperadminConfig() {
     };
   }
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDoc(doc(window.firestore, "superadmin", "config"));
+    const snap = await getDoc(doc(fs, "superadmin", "config"));
     if (!snap.exists()) return null;
     const data = snap.data();
     return {
@@ -102,9 +103,10 @@ async function setSuperadminConfig(password) {
   const passwordHash = await hashPassword(password);
   const config = { passwordHash, isFixed: false, createdAt: Date.now() };
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await setDoc(doc(window.firestore, "superadmin", "config"), {
+    await setDoc(doc(fs, "superadmin", "config"), {
       passwordHash,
       createdAt: serverTimestamp(),
     });
@@ -135,9 +137,10 @@ async function changeSuperadminPassword(oldPassword, newPassword) {
 // ============================================================
 
 async function getSchools() {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { collection, getDocs, orderBy, query } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDocs(query(collection(window.firestore, "schools"), orderBy("name")));
+    const snap = await getDocs(query(collection(fs, "schools"), orderBy("name")));
     const list = [];
     snap.forEach((d) => {
       const data = d.data();
@@ -161,10 +164,30 @@ async function getSchools() {
 }
 
 function subscribeToSchools(cb) {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
-    let unsub = null;
+  if (!window.FIREBASE_HABILITADO) {
+    const fetch = () => {
+      try {
+        cb(JSON.parse(localStorage.getItem("coop_schools") || "[]"));
+      } catch { cb([]); }
+    };
+    fetch();
+    return window.subscribeDemo ? window.subscribeDemo("coop_schools", fetch) : () => {};
+  }
+
+  let unsub = null;
+  window.awaitFirestore().then((fs) => {
+    if (!fs) {
+      const fetch = () => {
+        try {
+          cb(JSON.parse(localStorage.getItem("coop_schools") || "[]"));
+        } catch { cb([]); }
+      };
+      fetch();
+      window.subscribeDemo && window.subscribeDemo("coop_schools", fetch);
+      return;
+    }
     import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ collection, onSnapshot, query, orderBy }) => {
-      const q = query(collection(window.firestore, "schools"), orderBy("name"));
+      const q = query(collection(fs, "schools"), orderBy("name"));
       unsub = onSnapshot(q, (snap) => {
         const list = [];
         snap.forEach((d) => {
@@ -180,17 +203,8 @@ function subscribeToSchools(cb) {
         cb(list);
       });
     });
-    return () => unsub && unsub();
-  }
-
-  // Demo
-  const fetch = () => {
-    try {
-      cb(JSON.parse(localStorage.getItem("coop_schools") || "[]"));
-    } catch { cb([]); }
-  };
-  fetch();
-  return window.subscribeDemo ? window.subscribeDemo("coop_schools", fetch) : () => {};
+  });
+  return () => unsub && unsub();
 }
 
 async function createSchool(data) {
@@ -202,9 +216,10 @@ async function createSchool(data) {
     createdAt: Date.now(),
   };
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const ref = await addDoc(collection(window.firestore, "schools"), {
+    const ref = await addDoc(collection(fs, "schools"), {
       name: school.name,
       address: school.address,
       city: school.city,
@@ -222,9 +237,10 @@ async function createSchool(data) {
 }
 
 async function updateSchool(id, updates) {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await updateDoc(doc(window.firestore, "schools", id), updates);
+    await updateDoc(doc(fs, "schools", id), updates);
     return;
   }
 
@@ -237,19 +253,20 @@ async function updateSchool(id, updates) {
 }
 
 async function deleteSchool(id) {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, deleteDoc, collection, getDocs, query, where } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
     // Eliminar las clases asociadas
-    const classesSnap = await getDocs(query(collection(window.firestore, "classes"), where("schoolId", "==", id)));
+    const classesSnap = await getDocs(query(collection(fs, "classes"), where("schoolId", "==", id)));
     for (const classDoc of classesSnap.docs) {
       // Eliminar transacciones de cada clase
-      const txSnap = await getDocs(collection(window.firestore, "classes", classDoc.id, "transactions"));
+      const txSnap = await getDocs(collection(fs, "classes", classDoc.id, "transactions"));
       for (const txDoc of txSnap.docs) {
         await deleteDoc(txDoc.ref);
       }
       await deleteDoc(classDoc.ref);
     }
-    await deleteDoc(doc(window.firestore, "schools", id));
+    await deleteDoc(doc(fs, "schools", id));
     return;
   }
 
@@ -276,9 +293,10 @@ function generateSchoolId() {
 // ============================================================
 
 async function getAllClassesForSuperadmin() {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { collection, getDocs, orderBy, query } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDocs(query(collection(window.firestore, "classes"), orderBy("createdAt", "desc")));
+    const snap = await getDocs(query(collection(fs, "classes"), orderBy("createdAt", "desc")));
     const list = [];
     snap.forEach((d) => {
       const data = d.data();
@@ -315,10 +333,22 @@ async function getAllClassesForSuperadmin() {
 }
 
 function subscribeToAllClasses(cb) {
-  if (window.FIREBASE_HABILITADO && window.firestore) {
-    let unsub = null;
+  if (!window.FIREBASE_HABILITADO) {
+    const fetch = () => { getAllClassesForSuperadmin().then(cb); };
+    fetch();
+    return window.subscribeDemo ? window.subscribeDemo("coop_classes_all", fetch) : () => {};
+  }
+
+  let unsub = null;
+  window.awaitFirestore().then((fs) => {
+    if (!fs) {
+      const fetch = () => { getAllClassesForSuperadmin().then(cb); };
+      fetch();
+      window.subscribeDemo && window.subscribeDemo("coop_classes_all", fetch);
+      return;
+    }
     import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ collection, onSnapshot, query, orderBy }) => {
-      const q = query(collection(window.firestore, "classes"), orderBy("createdAt", "desc"));
+      const q = query(collection(fs, "classes"), orderBy("createdAt", "desc"));
       unsub = onSnapshot(q, (snap) => {
         const list = [];
         snap.forEach((d) => {
@@ -340,12 +370,8 @@ function subscribeToAllClasses(cb) {
         cb(list);
       });
     });
-    return () => unsub && unsub();
-  }
-
-  const fetch = () => { getAllClassesForSuperadmin().then(cb); };
-  fetch();
-  return window.subscribeDemo ? window.subscribeDemo("coop_classes_all", fetch) : () => {};
+  });
+  return () => unsub && unsub();
 }
 
 async function createClassAsSuperadmin(data) {
@@ -382,9 +408,10 @@ async function createClassAsSuperadmin(data) {
     updatedAt: Date.now(),
   };
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await setDoc(doc(window.firestore, "classes", code), {
+    await setDoc(doc(fs, "classes", code), {
       ...classInfo,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -401,9 +428,10 @@ async function createClassAsSuperadmin(data) {
 async function updateClassAsSuperadmin(code, updates) {
   const normalized = code.trim().toUpperCase();
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await updateDoc(doc(window.firestore, "classes", normalized), {
+    await updateDoc(doc(fs, "classes", normalized), {
       ...updates,
       updatedAt: serverTimestamp(),
     });
@@ -421,14 +449,15 @@ async function updateClassAsSuperadmin(code, updates) {
 async function deleteClassAsSuperadmin(code) {
   const normalized = code.trim().toUpperCase();
 
-  if (window.FIREBASE_HABILITADO && window.firestore) {
+  const fs = await window.awaitFirestore();
+  if (fs) {
     const { doc, deleteDoc, collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
     // Eliminar transacciones
-    const txSnap = await getDocs(collection(window.firestore, "classes", normalized, "transactions"));
+    const txSnap = await getDocs(collection(fs, "classes", normalized, "transactions"));
     for (const txDoc of txSnap.docs) {
       await deleteDoc(txDoc.ref);
     }
-    await deleteDoc(doc(window.firestore, "classes", normalized));
+    await deleteDoc(doc(fs, "classes", normalized));
     return;
   }
 
