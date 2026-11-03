@@ -7,21 +7,23 @@
 // desde sus móviles en tiempo real).
 //
 // Mientras estas variables estén vacías, la app funciona en
-// "modo demo" usando el almacenamiento del navegador (perfecto
-// para probar, pero los datos NO se comparten entre familias).
+// "modo demo" usando el almacenamiento del navegador.
 //
 // CÓMO CONSEGUIR TUS CLAVES:
 //   1. Entra en https://console.firebase.google.com
-//   2. Crea un proyecto nuevo (gratis) → nombre: "cooperativa-clase"
-//   3. En el menú de la izquierda, baja hasta "Build" → "Firestore Database"
-//      → "Crear base de datos" → "Modo de producción" → elige una región
-//   4. En la página principal del proyecto, pulsa el icono "</>" (Web)
-//      para añadir una aplicación web. Pon "cooperativa" como nombre.
+//   2. Crea un proyecto nuevo (gratis)
+//   3. Build → Firestore Database → Crear base de datos
+//   4. En la página principal del proyecto, pulsa "</>" (Web)
 //   5. Te mostrará un código con tus claves. Cópialas aquí abajo.
+//
+// IMPORTANTE: respeta las comillas y las comas. Si pegas las
+// claves con un formato raro (comillas tipográficas " ", falta
+// de comas...), la app no arrancará.
 //
 // ============================================================
 
-const firebaseConfig = {
+// Inicializamos como objetos vacíos por seguridad
+var FIREBASE_CONFIG = {
   apiKey: "AIzaSyCi63uULiZMehJNQAeowl_s51qbz0zKvys",
   authDomain: "cooperativa-67101.firebaseapp.com",
   projectId: "cooperativa-67101",
@@ -34,35 +36,62 @@ const firebaseConfig = {
 // CONFIGURACIÓN DEL SUPERADMINISTRADOR
 // ============================================================
 //
-// El superadmin es quien crea los colegios, las clases y
-// asigna a los responsables (admin de cada clase).
-//
 // - Si SUPERADMIN_PASSWORD está VACÍO: la PRIMERA vez que
 //   entres al panel superadmin (?superadmin=1), se te pedirá
-//   crear una contraseña. Esa contraseña se guardará hasheada.
-// - Si prefieres fijar una contraseña desde aquí, ponla en
-//   SUPERADMIN_PASSWORD y se usará esa (sin posibilidad de
-//   cambiarla desde el panel).
+//   crear una contraseña.
+// - Si prefieres fijar una desde aquí, ponla en esta variable.
 //
-// Acceso al panel: añade ?superadmin=1 a la URL, p. ej.:
+// Acceso: añade ?superadmin=1 a la URL, p. ej.:
 //   http://localhost:8000/?superadmin=1
-//
 // ============================================================
 
-const SUPERADMIN_PASSWORD = "";
+var SUPERADMIN_PASSWORD = "";
 
 // ============================================================
 // NO TOCAR NADA DE AQUÍ PARA ABAJO
 // ============================================================
 
-// Si TODAS las claves están vacías, modo demo activado.
-const FIREBASE_HABILITADO =
-  FIREBASE_CONFIG.apiKey &&
-  FIREBASE_CONFIG.projectId &&
-  FIREBASE_CONFIG.appId &&
-  !FIREBASE_CONFIG.apiKey.startsWith("your-");
-
-// Exportar para uso global
+// Hacer disponibles en window lo antes posible (por si la
+// configuración de arriba falla, app.js puede detectarlo).
 window.FIREBASE_CONFIG = FIREBASE_CONFIG;
-window.FIREBASE_HABILITADO = FIREBASE_HABILITADO;
 window.SUPERADMIN_PASSWORD = SUPERADMIN_PASSWORD;
+
+// Detectar si Firebase está habilitado de forma segura.
+// Usamos try/catch para que la app no rompa aunque los valores
+// sean undefined, null o de tipo inesperado.
+var FIREBASE_HABILITADO = false;
+try {
+  var cfg = FIREBASE_CONFIG || {};
+  var apiKey = String(cfg.apiKey || "").trim();
+  var projectId = String(cfg.projectId || "").trim();
+  var appId = String(cfg.appId || "").trim();
+
+  FIREBASE_HABILITADO =
+    apiKey.length > 0 &&
+    projectId.length > 0 &&
+    appId.length > 0 &&
+    !apiKey.startsWith("your-") &&
+    !projectId.startsWith("your-");
+} catch (err) {
+  // Si algo falla, nos quedamos en modo demo
+  FIREBASE_HABILITADO = false;
+  console.error("Error leyendo FIREBASE_CONFIG:", err);
+}
+
+window.FIREBASE_HABILITADO = FIREBASE_HABILITADO;
+
+// Mensaje informativo en la consola para que sepas en qué modo estás
+if (FIREBASE_HABILITADO) {
+  console.log(
+    "%c✓ Cooperativa Escolar · Modo Firebase",
+    "color: #047857; font-weight: bold;"
+  );
+} else {
+  console.log(
+    "%c● Cooperativa Escolar · Modo demo (datos locales)",
+    "color: #b45309; font-weight: bold;"
+  );
+  console.log(
+    "Para activar Firebase: rellena FIREBASE_CONFIG en firebase-config.js"
+  );
+}
