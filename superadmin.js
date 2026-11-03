@@ -1,12 +1,8 @@
 // ============================================================
 // SUPERADMINISTRADOR - Lógica del panel de gestión
+// SOLO FIRESTORE (sin modo demo/localStorage para datos)
+// sessionStorage: sesión del superadmin
 // ============================================================
-// Este archivo se carga DESPUÉS de app.js y añade:
-//   - Gestión de colegios (escuelas)
-//   - Gestión de clases (vinculadas a un colegio)
-//   - Gestión de responsables (admin de cada clase)
-//   - Login del superadmin con contraseña
-//
 // Acceso: añade ?superadmin=1 a la URL
 // ============================================================
 
@@ -24,7 +20,6 @@ let superadminState = {
 // ============================================================
 // UTILIDADES PROPIAS DEL SUPERADMIN
 // ============================================================
-
 async function hashPassword(password) {
   const salt = "coop-superadmin-salt-v1";
   const data = new TextEncoder().encode(salt + password);
@@ -47,7 +42,6 @@ async function verifyPassword(password, hash) {
 // ============================================================
 // SESIÓN SUPERADMIN (sessionStorage)
 // ============================================================
-
 function hasSuperadminSession() {
   try {
     return Boolean(sessionStorage.getItem("superadmin_session"));
@@ -57,17 +51,36 @@ function hasSuperadminSession() {
 }
 
 function setSuperadminSession() {
-  try { sessionStorage.setItem("superadmin_session", String(Date.now())); } catch {}
+  try {
+    sessionStorage.setItem("superadmin_session", String(Date.now()));
+  } catch {}
 }
 
 function clearSuperadminSession() {
-  try { sessionStorage.removeItem("superadmin_session"); } catch {}
+  try {
+    sessionStorage.removeItem("superadmin_session");
+  } catch {}
 }
 
 // ============================================================
-// CAPA DE DATOS - SUPERADMIN CONFIG
+// VERIFICACIÓN FIREBASE
 // ============================================================
+function ensureFirebaseSA() {
+  if (!window.FIREBASE_HABILITADO) {
+    throw new Error(
+      "Firebase no está configurado. Rellena FIREBASE_CONFIG en firebase-config.js."
+    );
+  }
+  if (!window.firestore) {
+    throw new Error(
+      "Firebase aún no está listo. Espera unos segundos o recarga la página."
+    );
+  }
+}
 
+// ============================================================
+// CAPA DE DATOS - SUPERADMIN CONFIG (SOLO FIRESTORE)
+// ============================================================
 async function getSuperadminConfig() {
   // Si hay contraseña fijada en firebase-config.js, esa tiene prioridad
   if (window.SUPERADMIN_PASSWORD) {
@@ -77,117 +90,89 @@ async function getSuperadminConfig() {
     };
   }
 
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, getDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDoc(doc(fs, "superadmin", "config"));
-    if (!snap.exists()) return null;
-    const data = snap.data();
-    return {
-      passwordHash: data.passwordHash,
-      isFixed: false,
-      createdAt: data.createdAt?.toMillis?.() || Date.now(),
-    };
-  }
-
-  // Modo demo
-  try {
-    const raw = localStorage.getItem("coop_superadmin_config");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  ensureFirebaseSA();
+  const { doc, getDoc } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  const snap = await getDoc(doc(window.firestore, "superadmin", "config"));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  return {
+    passwordHash: data.passwordHash,
+    isFixed: false,
+    createdAt: data.createdAt?.toMillis?.() || Date.now(),
+  };
 }
 
 async function setSuperadminConfig(password) {
+  ensureFirebaseSA();
   const passwordHash = await hashPassword(password);
-  const config = { passwordHash, isFixed: false, createdAt: Date.now() };
 
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await setDoc(doc(fs, "superadmin", "config"), {
-      passwordHash,
-      createdAt: serverTimestamp(),
-    });
-  } else {
-    localStorage.setItem("coop_superadmin_config", JSON.stringify(config));
-    window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_superadmin_config" } }));
-  }
+  const { doc, setDoc, serverTimestamp } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  await setDoc(doc(window.firestore, "superadmin", "config"), {
+    passwordHash,
+    createdAt: serverTimestamp(),
+  });
 
-  return config;
+  return { passwordHash, isFixed: false, createdAt: Date.now() };
 }
 
 async function changeSuperadminPassword(oldPassword, newPassword) {
   const config = await getSuperadminConfig();
   if (!config) throw new Error("No hay configuración de superadmin todavía.");
-
   if (config.isFixed) {
-    throw new Error("La contraseña está fijada en firebase-config.js. Para cambiarla, edita ese archivo.");
+    throw new Error(
+      "La contraseña está fijada en firebase-config.js. Para cambiarla, edita ese archivo."
+    );
   }
-
   const ok = await verifyPassword(oldPassword, config.passwordHash);
   if (!ok) throw new Error("La contraseña actual no es correcta.");
-
   await setSuperadminConfig(newPassword);
 }
 
 // ============================================================
-// CAPA DE DATOS - COLEGIOS
+// CAPA DE DATOS - COLEGIOS (SOLO FIRESTORE)
 // ============================================================
-
 async function getSchools() {
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { collection, getDocs, orderBy, query } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDocs(query(collection(fs, "schools"), orderBy("name")));
-    const list = [];
-    snap.forEach((d) => {
-      const data = d.data();
-      list.push({
-        id: d.id,
-        name: data.name,
-        address: data.address,
-        city: data.city,
-        createdAt: data.createdAt?.toMillis?.() || Date.now(),
-      });
+  ensureFirebaseSA();
+  const { collection, getDocs, orderBy, query } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  const snap = await getDocs(
+    query(collection(window.firestore, "schools"), orderBy("name"))
+  );
+  const list = [];
+  snap.forEach((d) => {
+    const data = d.data();
+    list.push({
+      id: d.id,
+      name: data.name,
+      address: data.address,
+      city: data.city,
+      createdAt: data.createdAt?.toMillis?.() || Date.now(),
     });
-    return list;
-  }
-
-  // Demo
-  try {
-    return JSON.parse(localStorage.getItem("coop_schools") || "[]");
-  } catch {
-    return [];
-  }
+  });
+  return list;
 }
 
 function subscribeToSchools(cb) {
-  if (!window.FIREBASE_HABILITADO) {
-    const fetch = () => {
-      try {
-        cb(JSON.parse(localStorage.getItem("coop_schools") || "[]"));
-      } catch { cb([]); }
-    };
-    fetch();
-    return window.subscribeDemo ? window.subscribeDemo("coop_schools", fetch) : () => {};
+  if (!window.FIREBASE_HABILITADO || !window.firestore) {
+    cb([]);
+    return () => {};
   }
 
   let unsub = null;
-  window.awaitFirestore().then((fs) => {
-    if (!fs) {
-      const fetch = () => {
-        try {
-          cb(JSON.parse(localStorage.getItem("coop_schools") || "[]"));
-        } catch { cb([]); }
-      };
-      fetch();
-      window.subscribeDemo && window.subscribeDemo("coop_schools", fetch);
-      return;
-    }
-    import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ collection, onSnapshot, query, orderBy }) => {
-      const q = query(collection(fs, "schools"), orderBy("name"));
+  let cancelled = false;
+
+  import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(
+    ({ collection, onSnapshot, query, orderBy }) => {
+      if (cancelled) return;
+      const q = query(
+        collection(window.firestore, "schools"),
+        orderBy("name")
+      );
       unsub = onSnapshot(q, (snap) => {
         const list = [];
         snap.forEach((d) => {
@@ -202,12 +187,17 @@ function subscribeToSchools(cb) {
         });
         cb(list);
       });
-    });
-  });
-  return () => unsub && unsub();
+    }
+  );
+
+  return () => {
+    cancelled = true;
+    if (unsub) unsub();
+  };
 }
 
 async function createSchool(data) {
+  ensureFirebaseSA();
   const school = {
     id: generateSchoolId(),
     name: data.name.trim(),
@@ -216,72 +206,56 @@ async function createSchool(data) {
     createdAt: Date.now(),
   };
 
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { collection, addDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const ref = await addDoc(collection(fs, "schools"), {
-      name: school.name,
-      address: school.address,
-      city: school.city,
-      createdAt: serverTimestamp(),
-    });
-    school.id = ref.id;
-  } else {
-    const schools = await getSchools();
-    schools.push(school);
-    localStorage.setItem("coop_schools", JSON.stringify(schools));
-    window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_schools" } }));
-  }
+  const { collection, addDoc, serverTimestamp } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  const ref = await addDoc(collection(window.firestore, "schools"), {
+    name: school.name,
+    address: school.address,
+    city: school.city,
+    createdAt: serverTimestamp(),
+  });
+  school.id = ref.id;
 
   return school;
 }
 
 async function updateSchool(id, updates) {
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await updateDoc(doc(fs, "schools", id), updates);
-    return;
-  }
-
-  const schools = await getSchools();
-  const idx = schools.findIndex((s) => s.id === id);
-  if (idx === -1) throw new Error("Colegio no encontrado");
-  schools[idx] = { ...schools[idx], ...updates };
-  localStorage.setItem("coop_schools", JSON.stringify(schools));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_schools" } }));
+  ensureFirebaseSA();
+  const { doc, updateDoc } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  await updateDoc(doc(window.firestore, "schools", id), updates);
 }
 
 async function deleteSchool(id) {
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, deleteDoc, collection, getDocs, query, where } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    // Eliminar las clases asociadas
-    const classesSnap = await getDocs(query(collection(fs, "classes"), where("schoolId", "==", id)));
-    for (const classDoc of classesSnap.docs) {
-      // Eliminar transacciones de cada clase
-      const txSnap = await getDocs(collection(fs, "classes", classDoc.id, "transactions"));
-      for (const txDoc of txSnap.docs) {
-        await deleteDoc(txDoc.ref);
-      }
-      await deleteDoc(classDoc.ref);
-    }
-    await deleteDoc(doc(fs, "schools", id));
-    return;
-  }
+  ensureFirebaseSA();
+  const {
+    doc,
+    deleteDoc,
+    collection,
+    getDocs,
+    query,
+    where,
+  } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
 
-  // Demo: eliminar clases y transacciones asociadas
-  const classes = await getAllClassesForSuperadmin();
-  const schoolClasses = classes.filter((c) => c.schoolId === id);
-  for (const c of schoolClasses) {
-    localStorage.removeItem(`coop_transactions_${c.code}`);
-    localStorage.removeItem(`coop_class_${c.code}`);
+  // Eliminar las clases asociadas
+  const classesSnap = await getDocs(
+    query(collection(window.firestore, "classes"), where("schoolId", "==", id))
+  );
+  for (const classDoc of classesSnap.docs) {
+    // Eliminar transacciones de cada clase
+    const txSnap = await getDocs(
+      collection(window.firestore, "classes", classDoc.id, "transactions")
+    );
+    for (const txDoc of txSnap.docs) {
+      await deleteDoc(txDoc.ref);
+    }
+    await deleteDoc(classDoc.ref);
   }
-  const schools = await getSchools();
-  const filtered = schools.filter((s) => s.id !== id);
-  localStorage.setItem("coop_schools", JSON.stringify(filtered));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_schools" } }));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_classes" } }));
+  await deleteDoc(doc(window.firestore, "schools", id));
 }
 
 function generateSchoolId() {
@@ -289,66 +263,53 @@ function generateSchoolId() {
 }
 
 // ============================================================
-// CAPA DE DATOS - CLASES (para superadmin)
+// CAPA DE DATOS - CLASES (SOLO FIRESTORE)
 // ============================================================
-
 async function getAllClassesForSuperadmin() {
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { collection, getDocs, orderBy, query } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    const snap = await getDocs(query(collection(fs, "classes"), orderBy("createdAt", "desc")));
-    const list = [];
-    snap.forEach((d) => {
-      const data = d.data();
-      list.push({
-        code: d.id,
-        name: data.name,
-        schoolId: data.schoolId,
-        schoolName: data.schoolName,
-        year: data.year,
-        currency: data.currency || "EUR",
-        adminPinHash: data.adminPinHash,
-        adminName: data.adminName,
-        adminEmail: data.adminEmail,
-        openingBalance: data.openingBalance || 0,
-        createdAt: data.createdAt?.toMillis?.() || Date.now(),
-        updatedAt: data.updatedAt?.toMillis?.(),
-      });
+  ensureFirebaseSA();
+  const { collection, getDocs, orderBy, query } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  const snap = await getDocs(
+    query(collection(window.firestore, "classes"), orderBy("createdAt", "desc"))
+  );
+  const list = [];
+  snap.forEach((d) => {
+    const data = d.data();
+    list.push({
+      code: d.id,
+      name: data.name,
+      schoolId: data.schoolId,
+      schoolName: data.schoolName,
+      year: data.year,
+      currency: data.currency || "EUR",
+      adminPinHash: data.adminPinHash,
+      adminName: data.adminName,
+      adminEmail: data.adminEmail,
+      openingBalance: data.openingBalance || 0,
+      createdAt: data.createdAt?.toMillis?.() || Date.now(),
+      updatedAt: data.updatedAt?.toMillis?.(),
     });
-    return list;
-  }
-
-  // Demo: recuperar todas las clases guardadas
-  const all = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith("coop_class_")) {
-      try {
-        const data = JSON.parse(localStorage.getItem(key));
-        all.push(data);
-      } catch {}
-    }
-  }
-  return all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  });
+  return list;
 }
 
 function subscribeToAllClasses(cb) {
-  if (!window.FIREBASE_HABILITADO) {
-    const fetch = () => { getAllClassesForSuperadmin().then(cb); };
-    fetch();
-    return window.subscribeDemo ? window.subscribeDemo("coop_classes_all", fetch) : () => {};
+  if (!window.FIREBASE_HABILITADO || !window.firestore) {
+    cb([]);
+    return () => {};
   }
 
   let unsub = null;
-  window.awaitFirestore().then((fs) => {
-    if (!fs) {
-      const fetch = () => { getAllClassesForSuperadmin().then(cb); };
-      fetch();
-      window.subscribeDemo && window.subscribeDemo("coop_classes_all", fetch);
-      return;
-    }
-    import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(({ collection, onSnapshot, query, orderBy }) => {
-      const q = query(collection(fs, "classes"), orderBy("createdAt", "desc"));
+  let cancelled = false;
+
+  import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js").then(
+    ({ collection, onSnapshot, query, orderBy }) => {
+      if (cancelled) return;
+      const q = query(
+        collection(window.firestore, "classes"),
+        orderBy("createdAt", "desc")
+      );
       unsub = onSnapshot(q, (snap) => {
         const list = [];
         snap.forEach((d) => {
@@ -369,13 +330,17 @@ function subscribeToAllClasses(cb) {
         });
         cb(list);
       });
-    });
-  });
-  return () => unsub && unsub();
+    }
+  );
+
+  return () => {
+    cancelled = true;
+    if (unsub) unsub();
+  };
 }
 
 async function createClassAsSuperadmin(data) {
-  // El superadmin puede crear clases y asignar un responsable + PIN
+  ensureFirebaseSA();
   const code = (data.code || generateCodePublic()).trim().toUpperCase();
   const adminPinHash = await hashPinPublic(data.adminPin);
 
@@ -408,63 +373,44 @@ async function createClassAsSuperadmin(data) {
     updatedAt: Date.now(),
   };
 
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, setDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await setDoc(doc(fs, "classes", code), {
-      ...classInfo,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } else {
-    localStorage.setItem(`coop_class_${code}`, JSON.stringify(classInfo));
-    window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: `coop_class_${code}` } }));
-    window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_classes_all" } }));
-  }
+  const { doc, setDoc, serverTimestamp } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  await setDoc(doc(window.firestore, "classes", code), {
+    ...classInfo,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
 
   return classInfo;
 }
 
 async function updateClassAsSuperadmin(code, updates) {
+  ensureFirebaseSA();
   const normalized = code.trim().toUpperCase();
-
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, updateDoc, serverTimestamp } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    await updateDoc(doc(fs, "classes", normalized), {
-      ...updates,
-      updatedAt: serverTimestamp(),
-    });
-    return;
-  }
-
-  const existing = await getClassPublic(normalized);
-  if (!existing) throw new Error("Clase no encontrada");
-  const updated = { ...existing, ...updates, updatedAt: Date.now() };
-  localStorage.setItem(`coop_class_${normalized}`, JSON.stringify(updated));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: `coop_class_${normalized}` } }));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_classes_all" } }));
+  const { doc, updateDoc, serverTimestamp } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  await updateDoc(doc(window.firestore, "classes", normalized), {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 async function deleteClassAsSuperadmin(code) {
+  ensureFirebaseSA();
   const normalized = code.trim().toUpperCase();
-
-  const fs = await window.awaitFirestore();
-  if (fs) {
-    const { doc, deleteDoc, collection, getDocs } = await import("https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js");
-    // Eliminar transacciones
-    const txSnap = await getDocs(collection(fs, "classes", normalized, "transactions"));
-    for (const txDoc of txSnap.docs) {
-      await deleteDoc(txDoc.ref);
-    }
-    await deleteDoc(doc(fs, "classes", normalized));
-    return;
+  const { doc, deleteDoc, collection, getDocs } = await import(
+    "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"
+  );
+  // Eliminar transacciones
+  const txSnap = await getDocs(
+    collection(window.firestore, "classes", normalized, "transactions")
+  );
+  for (const txDoc of txSnap.docs) {
+    await deleteDoc(txDoc.ref);
   }
-
-  localStorage.removeItem(`coop_class_${normalized}`);
-  localStorage.removeItem(`coop_transactions_${normalized}`);
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: `coop_class_${normalized}` } }));
-  window.dispatchEvent(new CustomEvent("coop-storage-change", { detail: { key: "coop_classes_all" } }));
+  await deleteDoc(doc(window.firestore, "classes", normalized));
 }
 
 async function resetClassPin(code, newPin) {
@@ -474,7 +420,7 @@ async function resetClassPin(code, newPin) {
   await updateClassAsSuperadmin(normalized, { adminPinHash });
 }
 
-// Helpers (algunos ya existen en app.js pero los reexportamos por si acaso)
+// Helpers
 function generateCodePublic() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -494,16 +440,49 @@ async function hashPinPublic(pin) {
 }
 
 async function getClassPublic(code) {
-  if (window.getClass) return window.getClass(code);
+  if (typeof window.getClass === "function") return window.getClass(code);
   return null;
 }
 
 // ============================================================
 // RENDER: LOGIN SUPERADMIN
 // ============================================================
-
 async function renderSuperadminLogin() {
-  const config = await getSuperadminConfig();
+  // Si Firebase no está disponible, mostramos error
+  if (!window.FIREBASE_HABILITADO) {
+    document.body.innerHTML = `
+      <div class="success-screen">
+        <div class="success-card">
+          <div class="success-icon" style="background-color: var(--rojo-100); color: var(--rojo-700);">!</div>
+          <h2> Firebase no configurado</h2>
+          <p class="description">
+            Configura Firebase en <code>firebase-config.js</code> para usar el panel superadmin.
+          </p>
+          <button class="btn btn-primary" onclick="navigate('/')">Volver al inicio</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  let config = null;
+  try {
+    config = await getSuperadminConfig();
+  } catch (err) {
+    document.body.innerHTML = `
+      <div class="success-screen">
+        <div class="success-card">
+          <div class="success-icon" style="background-color: var(--rojo-100); color: var(--rojo-700);">!</div>
+          <h2>Error de conexión</h2>
+          <p class="description">${escapeHtmlPublic(err.message)}</p>
+          <button class="btn btn-primary" onclick="location.reload()">Reintentar</button>
+          <button class="btn btn-outline" onclick="navigate('/')" style="margin-top: 0.5rem;">Volver al inicio</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   const isFirstTime = !config;
 
   document.body.innerHTML = `
@@ -512,14 +491,16 @@ async function renderSuperadminLogin() {
         <div class="superadmin-login-icon">${ICONS_SA.shield}</div>
         <h1>Panel del Superadministrador</h1>
         <p class="superadmin-login-desc">
-          ${isFirstTime
-            ? "Es la primera vez que accedes. Crea una contraseña para proteger el panel. Guárdala en un lugar seguro."
-            : "Introduce la contraseña para acceder al panel de gestión."
+          ${
+            isFirstTime
+              ? "Es la primera vez que accedes. Crea una contraseña para proteger el panel. Guárdala en un lugar seguro."
+              : "Introduce la contraseña para acceder al panel de gestión."
           }
         </p>
-
         <form id="sa-login-form" class="sa-form">
-          ${isFirstTime ? `
+          ${
+            isFirstTime
+              ? `
             <div class="field">
               <label class="label" for="sa-pass1">Nueva contraseña</label>
               <input class="input" type="password" id="sa-pass1" placeholder="Mínimo 6 caracteres" minlength="6" required autofocus />
@@ -528,13 +509,17 @@ async function renderSuperadminLogin() {
               <label class="label" for="sa-pass2">Repetir contraseña</label>
               <input class="input" type="password" id="sa-pass2" placeholder="Repite la contraseña" minlength="6" required />
             </div>
-          ` : `
+          `
+              : `
             <div class="field">
               <label class="label" for="sa-pass">Contraseña</label>
               <input class="input" type="password" id="sa-pass" placeholder="Tu contraseña" required autofocus />
             </div>
-          `}
-          <button type="submit" class="btn btn-primary btn-block btn-lg">${isFirstTime ? "Crear contraseña y entrar" : "Entrar"}</button>
+          `
+          }
+          <button type="submit" class="btn btn-primary btn-block btn-lg">
+            ${isFirstTime ? "Crear contraseña y entrar" : "Entrar"}
+          </button>
           <a href="?" class="sa-back-link">${ICONS_SA.arrowLeft} Volver al inicio</a>
         </form>
       </div>
@@ -551,7 +536,8 @@ async function renderSuperadminLogin() {
       if (isFirstTime) {
         const p1 = document.getElementById("sa-pass1").value;
         const p2 = document.getElementById("sa-pass2").value;
-        if (p1.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
+        if (p1.length < 6)
+          throw new Error("La contraseña debe tener al menos 6 caracteres.");
         if (p1 !== p2) throw new Error("Las contraseñas no coinciden.");
         await setSuperadminConfig(p1);
         setSuperadminSession();
@@ -577,7 +563,6 @@ async function renderSuperadminLogin() {
 // ============================================================
 // RENDER: APP SUPERADMIN
 // ============================================================
-
 async function renderSuperadminApp() {
   superadminState.isLogged = true;
 
@@ -629,7 +614,7 @@ function renderSuperadminShell() {
       <footer class="sa-footer">
         <div class="container">
           <div class="sa-footer-inner">
-            <div>${window.FIREBASE_HABILITADO ? "Conectado a Firestore" : "Modo demo (datos locales)"}</div>
+            <div>Conectado a Firestore</div>
             <div>Panel del superadmin · No compartir acceso</div>
           </div>
         </div>
@@ -667,7 +652,9 @@ function updateSuperadminContent() {
 
   // Update nav active
   document.querySelectorAll(".sa-header .btn").forEach((b) => b.classList.remove("btn-active"));
-  const navId = `sa-nav-${superadminState.currentView === "school-classes" ? "schools" : superadminState.currentView}`;
+  const navId = `sa-nav-${
+    superadminState.currentView === "school-classes" ? "schools" : superadminState.currentView
+  }`;
   const navBtn = document.getElementById(navId);
   if (navBtn) navBtn.classList.add("btn-active");
 }
@@ -675,7 +662,6 @@ function updateSuperadminContent() {
 // ============================================================
 // VISTA: DASHBOARD
 // ============================================================
-
 function renderSADashboard() {
   const { schools, classes } = superadminState;
   const totalClasses = classes.length;
@@ -689,19 +675,25 @@ function renderSADashboard() {
         <div class="sa-stat-card sa-stat-primary">
           <div class="sa-stat-icon">${ICONS_SA.building}</div>
           <div class="sa-stat-value">${totalSchools}</div>
-          <div class="sa-stat-label">Colegio${totalSchools !== 1 ? "s" : ""} registrado${totalSchools !== 1 ? "s" : ""}</div>
+          <div class="sa-stat-label">Colegio${totalSchools !== 1 ? "s" : ""} registrado${
+    totalSchools !== 1 ? "s" : ""
+  }</div>
         </div>
         <div class="sa-stat-card sa-stat-success">
           <div class="sa-stat-icon">${ICONS_SA.graduation}</div>
           <div class="sa-stat-value">${totalClasses}</div>
-          <div class="sa-stat-label">Clase${totalClasses !== 1 ? "s" : ""} activa${totalClasses !== 1 ? "s" : ""}</div>
+          <div class="sa-stat-label">Clase${totalClasses !== 1 ? "s" : ""} activa${
+    totalClasses !== 1 ? "s" : ""
+  }</div>
         </div>
         <div class="sa-stat-card sa-stat-warning">
           <div class="sa-stat-icon">${ICONS_SA.users}</div>
           <div class="sa-stat-value">${classes.filter((c) => c.adminName).length}</div>
           <div class="sa-stat-label">Responsables asignados</div>
         </div>
-        <div class="sa-stat-card ${orphanClasses > 0 ? "sa-stat-danger" : "sa-stat-neutral"}">
+        <div class="sa-stat-card ${
+          orphanClasses > 0 ? "sa-stat-danger" : "sa-stat-neutral"
+        }">
           <div class="sa-stat-icon">${ICONS_SA.alert}</div>
           <div class="sa-stat-value">${orphanClasses}</div>
           <div class="sa-stat-label">Sin colegio asignado</div>
@@ -743,281 +735,293 @@ function renderSADashboard() {
       </div>
     </div>
 
-    ${schools.length > 0 ? `
+    ${
+      schools.length > 0
+        ? `
       <div class="sa-section">
         <h3 class="sa-section-title">Colegios recientes</h3>
         <div class="sa-schools-grid">
-          ${schools.slice(0, 6).map((s) => {
-            const numClasses = classes.filter((c) => c.schoolId === s.id).length;
-            return `
-              <div class="sa-school-card" onclick="saGoSchoolClasses('${s.id}')">
-                <div class="sa-school-card-header">
-                  <div class="sa-school-icon">${ICONS_SA.building}</div>
-                  <div class="sa-school-info">
-                    <div class="sa-school-name">${escapeHtmlPublic(s.name)}</div>
-                    <div class="sa-school-meta">${escapeHtmlPublic(s.city || "Sin ciudad")}</div>
-                  </div>
-                </div>
-                <div class="sa-school-card-body">
-                  <div class="sa-school-stat">
-                    <span class="sa-school-stat-num">${numClasses}</span>
-                    <span class="sa-school-stat-label">clase${numClasses !== 1 ? "s" : ""}</span>
-                  </div>
+          ${schools
+            .slice(0, 6)
+            .map((s) => {
+              const numClasses = classes.filter((c) => c.schoolId === s.id).length;
+              return `
+            <div class="sa-school-card" onclick="saGoSchoolClasses('${s.id}')">
+              <div class="sa-school-card-header">
+                <div class="sa-school-icon">${ICONS_SA.building}</div>
+                <div class="sa-school-info">
+                  <div class="sa-school-name">${escapeHtmlPublic(s.name)}</div>
+                  <div class="sa-school-meta">${escapeHtmlPublic(s.city || "Sin ciudad")}</div>
                 </div>
               </div>
-            `;
-          }).join("")}
+              <div class="sa-school-card-body">
+                <div class="sa-school-stat">
+                  <span class="sa-school-stat-num">${numClasses}</span>
+                  <span class="sa-school-stat-label">clase${numClasses !== 1 ? "s" : ""}</span>
+                </div>
+              </div>
+            </div>
+          `;
+            })
+            .join("")}
         </div>
       </div>
-    ` : `
+    `
+        : `
       <div class="sa-empty-state">
         <div class="sa-empty-icon">${ICONS_SA.building}</div>
         <h3>No hay colegios todavía</h3>
         <p>Crea tu primer colegio para empezar a organizar las clases.</p>
         <button class="btn btn-primary" onclick="saOpenSchoolForm()">Crear primer colegio</button>
       </div>
-    `}
+    `
+    }
   `;
 }
 
 // ============================================================
 // VISTA: LISTA DE COLEGIOS
 // ============================================================
-
 function renderSASchoolsList() {
   const { schools, classes } = superadminState;
 
   if (schools.length === 0) {
-    return `
-      <div class="sa-section">
-        <div class="sa-section-header">
-          <h2 class="sa-section-title">Colegios</h2>
-          <button class="btn btn-primary btn-sm" onclick="saOpenSchoolForm()">${ICONS_SA.plus} Crear colegio</button>
-        </div>
-        <div class="sa-empty-state">
-          <div class="sa-empty-icon">${ICONS_SA.building}</div>
-          <h3>Aún no hay colegios</h3>
-          <p>Empieza creando tu primer colegio. Luego podrás añadir clases y asignar responsables.</p>
-          <button class="btn btn-primary" onclick="saOpenSchoolForm()">Crear primer colegio</button>
-        </div>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="sa-section">
+    return `<div class="sa-section">
       <div class="sa-section-header">
-        <h2 class="sa-section-title">Colegios (${schools.length})</h2>
+        <h2 class="sa-section-title">Colegios</h2>
         <button class="btn btn-primary btn-sm" onclick="saOpenSchoolForm()">${ICONS_SA.plus} Crear colegio</button>
       </div>
-      <div class="sa-table-wrap">
-        <table class="sa-table">
-          <thead>
-            <tr>
-              <th>Nombre</th>
-              <th>Ciudad</th>
-              <th>Dirección</th>
-              <th>Clases</th>
-              <th class="text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${schools.map((s) => {
+      <div class="sa-empty-state">
+        <div class="sa-empty-icon">${ICONS_SA.building}</div>
+        <h3>Aún no hay colegios</h3>
+        <p>Empieza creando tu primer colegio. Luego podrás añadir clases y asignar responsables.</p>
+        <button class="btn btn-primary" onclick="saOpenSchoolForm()">Crear primer colegio</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="sa-section">
+    <div class="sa-section-header">
+      <h2 class="sa-section-title">Colegios (${schools.length})</h2>
+      <button class="btn btn-primary btn-sm" onclick="saOpenSchoolForm()">${ICONS_SA.plus} Crear colegio</button>
+    </div>
+    <div class="sa-table-wrap">
+      <table class="sa-table">
+        <thead>
+          <tr>
+            <th>Nombre</th>
+            <th>Ciudad</th>
+            <th>Dirección</th>
+            <th>Clases</th>
+            <th class="text-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${schools
+            .map((s) => {
               const numClasses = classes.filter((c) => c.schoolId === s.id).length;
               return `
-                <tr>
-                  <td>
-                    <div class="sa-cell-strong">${escapeHtmlPublic(s.name)}</div>
-                  </td>
-                  <td>${escapeHtmlPublic(s.city || "—")}</td>
-                  <td>${escapeHtmlPublic(s.address || "—")}</td>
-                  <td><span class="badge badge-success">${numClasses}</span></td>
-                  <td class="text-right">
-                    <div class="sa-row-actions">
-                      <button class="btn btn-outline btn-sm" onclick="saGoSchoolClasses('${s.id}')">Ver clases</button>
-                      <button class="btn btn-ghost btn-sm" onclick="saOpenSchoolForm('${s.id}')">${ICONS_SA.pencil}</button>
-                      <button class="btn btn-ghost btn-sm sa-danger-btn" onclick="saOpenDeleteSchool('${s.id}')">${ICONS_SA.trash}</button>
-                    </div>
-                  </td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
+            <tr>
+              <td><div class="sa-cell-strong">${escapeHtmlPublic(s.name)}</div></td>
+              <td>${escapeHtmlPublic(s.city || "—")}</td>
+              <td>${escapeHtmlPublic(s.address || "—")}</td>
+              <td><span class="badge badge-success">${numClasses}</span></td>
+              <td class="text-right">
+                <div class="sa-row-actions">
+                  <button class="btn btn-outline btn-sm" onclick="saGoSchoolClasses('${s.id}')">Ver clases</button>
+                  <button class="btn btn-ghost btn-sm" onclick="saOpenSchoolForm('${s.id}')">${ICONS_SA.pencil}</button>
+                  <button class="btn btn-ghost btn-sm sa-danger-btn" onclick="saOpenDeleteSchool('${s.id}')">${ICONS_SA.trash}</button>
+                </div>
+              </td>
+            </tr>
+          `;
+            })
+            .join("")}
+        </tbody>
+      </table>
     </div>
-  `;
+  </div>`;
 }
 
 // ============================================================
 // VISTA: CLASES DE UN COLEGIO
 // ============================================================
-
 function renderSASchoolClasses(schoolId) {
   const school = superadminState.schools.find((s) => s.id === schoolId);
   if (!school) {
-    return `
-      <div class="sa-section">
-        <div class="sa-section-header">
-          <h2 class="sa-section-title">Colegio no encontrado</h2>
-          <button class="btn btn-outline btn-sm" onclick="saGoSchools()">Volver</button>
-        </div>
-        <p>El colegio que buscas ya no existe.</p>
+    return `<div class="sa-section">
+      <div class="sa-section-header">
+        <h2 class="sa-section-title">Colegio no encontrado</h2>
+        <button class="btn btn-outline btn-sm" onclick="saGoSchools()">Volver</button>
       </div>
-    `;
+      <p>El colegio que buscas ya no existe.</p>
+    </div>`;
   }
 
   const schoolClasses = superadminState.classes.filter((c) => c.schoolId === schoolId);
 
-  return `
-    <div class="sa-section">
-      <div class="sa-section-header">
-        <div>
-          <button class="btn btn-ghost btn-sm" onclick="saGoSchools()" style="margin-bottom: 0.5rem;">${ICONS_SA.arrowLeft} Volver a colegios</button>
-          <h2 class="sa-section-title">${escapeHtmlPublic(school.name)}</h2>
-          <div class="sa-section-sub">${escapeHtmlPublic(school.address || "")}${school.city ? ` · ${escapeHtmlPublic(school.city)}` : ""} · ${schoolClasses.length} clase${schoolClasses.length !== 1 ? "s" : ""}</div>
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="saOpenClassForm('${schoolId}')">${ICONS_SA.plus} Crear clase</button>
+  return `<div class="sa-section">
+    <div class="sa-section-header">
+      <div>
+        <button class="btn btn-ghost btn-sm" onclick="saGoSchools()" style="margin-bottom: 0.5rem;">${ICONS_SA.arrowLeft} Volver a colegios</button>
+        <h2 class="sa-section-title">${escapeHtmlPublic(school.name)}</h2>
+        <div class="sa-section-sub">${escapeHtmlPublic(school.address || "")}${
+    school.city ? ` · ${escapeHtmlPublic(school.city)}` : ""
+  } · ${schoolClasses.length} clase${schoolClasses.length !== 1 ? "s" : ""}</div>
       </div>
-
-      ${schoolClasses.length === 0 ? `
-        <div class="sa-empty-state">
-          <div class="sa-empty-icon">${ICONS_SA.graduation}</div>
-          <h3>Este colegio no tiene clases</h3>
-          <p>Crea la primera clase para este colegio y asígnale un responsable.</p>
-          <button class="btn btn-primary" onclick="saOpenClassForm('${schoolId}')">Crear primera clase</button>
-        </div>
-      ` : `
-        <div class="sa-table-wrap">
-          <table class="sa-table">
-            <thead>
-              <tr>
-                <th>Clase</th>
-                <th>Código</th>
-                <th>Curso</th>
-                <th>Responsable</th>
-                <th class="text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${schoolClasses.map((c) => renderSAClassRow(c)).join("")}
-            </tbody>
-          </table>
-        </div>
-      `}
+      <button class="btn btn-primary btn-sm" onclick="saOpenClassForm('${schoolId}')">${ICONS_SA.plus} Crear clase</button>
     </div>
-  `;
-}
 
-// ============================================================
-// VISTA: TODAS LAS CLASES
-// ============================================================
-
-function renderSAAllClasses() {
-  const { classes, schools } = superadminState;
-
-  if (classes.length === 0) {
-    return `
-      <div class="sa-section">
-        <div class="sa-section-header">
-          <h2 class="sa-section-title">Todas las clases</h2>
-          <button class="btn btn-primary btn-sm" onclick="saOpenClassForm(null)">${ICONS_SA.plus} Crear clase</button>
-        </div>
-        <div class="sa-empty-state">
-          <div class="sa-empty-icon">${ICONS_SA.graduation}</div>
-          <h3>Aún no hay clases</h3>
-          <p>Crea tu primera clase desde aquí o desde la página de un colegio.</p>
-          <button class="btn btn-primary" onclick="saOpenClassForm(null)">Crear primera clase</button>
-        </div>
+    ${
+      schoolClasses.length === 0
+        ? `
+      <div class="sa-empty-state">
+        <div class="sa-empty-icon">${ICONS_SA.graduation}</div>
+        <h3>Este colegio no tiene clases</h3>
+        <p>Crea la primera clase para este colegio y asígnale un responsable.</p>
+        <button class="btn btn-primary" onclick="saOpenClassForm('${schoolId}')">Crear primera clase</button>
       </div>
-    `;
-  }
-
-  return `
-    <div class="sa-section">
-      <div class="sa-section-header">
-        <h2 class="sa-section-title">Todas las clases (${classes.length})</h2>
-        <button class="btn btn-primary btn-sm" onclick="saOpenClassForm(null)">${ICONS_SA.plus} Crear clase</button>
-      </div>
+    `
+        : `
       <div class="sa-table-wrap">
         <table class="sa-table">
           <thead>
             <tr>
               <th>Clase</th>
               <th>Código</th>
-              <th>Colegio</th>
               <th>Curso</th>
               <th>Responsable</th>
               <th class="text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
-            ${classes.map((c) => renderSAClassRow(c, true)).join("")}
+            ${schoolClasses.map((c) => renderSAClassRow(c)).join("")}
           </tbody>
         </table>
       </div>
+    `
+    }
+  </div>`;
+}
+
+// ============================================================
+// VISTA: TODAS LAS CLASES
+// ============================================================
+function renderSAAllClasses() {
+  const { classes } = superadminState;
+
+  if (classes.length === 0) {
+    return `<div class="sa-section">
+      <div class="sa-section-header">
+        <h2 class="sa-section-title">Todas las clases</h2>
+        <button class="btn btn-primary btn-sm" onclick="saOpenClassForm(null)">${ICONS_SA.plus} Crear clase</button>
+      </div>
+      <div class="sa-empty-state">
+        <div class="sa-empty-icon">${ICONS_SA.graduation}</div>
+        <h3>Aún no hay clases</h3>
+        <p>Crea tu primera clase desde aquí o desde la página de un colegio.</p>
+        <button class="btn btn-primary" onclick="saOpenClassForm(null)">Crear primera clase</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="sa-section">
+    <div class="sa-section-header">
+      <h2 class="sa-section-title">Todas las clases (${classes.length})</h2>
+      <button class="btn btn-primary btn-sm" onclick="saOpenClassForm(null)">${ICONS_SA.plus} Crear clase</button>
     </div>
-  `;
+    <div class="sa-table-wrap">
+      <table class="sa-table">
+        <thead>
+          <tr>
+            <th>Clase</th>
+            <th>Código</th>
+            <th>Colegio</th>
+            <th>Curso</th>
+            <th>Responsable</th>
+            <th class="text-right">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${classes.map((c) => renderSAClassRow(c, true)).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 function renderSAClassRow(c, showSchool = false) {
-  return `
-    <tr>
-      <td><div class="sa-cell-strong">${escapeHtmlPublic(c.name)}</div></td>
-      <td><span class="badge sa-code-badge">${c.code}</span></td>
-      ${showSchool ? `<td>${escapeHtmlPublic(c.schoolName || "—")}</td>` : ""}
-      <td>${escapeHtmlPublic(c.year || "—")}</td>
-      <td>
-        ${c.adminName ? `<div class="sa-cell-strong">${escapeHtmlPublic(c.adminName)}</div>${c.adminEmail ? `<div class="sa-cell-sub">${escapeHtmlPublic(c.adminEmail)}</div>` : ""}` : '<span class="sa-muted">Sin asignar</span>'}
-      </td>
-      <td class="text-right">
-        <div class="sa-row-actions">
-          <a class="btn btn-outline btn-sm" href="?c=${c.code}" target="_blank">Ver</a>
-          <button class="btn btn-ghost btn-sm" onclick="saOpenClassForm(null, '${c.code}')" title="Editar">${ICONS_SA.pencil}</button>
-          <button class="btn btn-ghost btn-sm" onclick="saOpenResetPin('${c.code}')" title="Resetear PIN">${ICONS_SA.key}</button>
-          <button class="btn btn-ghost btn-sm sa-danger-btn" onclick="saOpenDeleteClass('${c.code}')" title="Eliminar">${ICONS_SA.trash}</button>
-        </div>
-      </td>
-    </tr>
-  `;
+  return `<tr>
+    <td><div class="sa-cell-strong">${escapeHtmlPublic(c.name)}</div></td>
+    <td><span class="badge sa-code-badge">${c.code}</span></td>
+    ${showSchool ? `<td>${escapeHtmlPublic(c.schoolName || "—")}</td>` : ""}
+    <td>${escapeHtmlPublic(c.year || "—")}</td>
+    <td>
+      ${
+        c.adminName
+          ? `<div class="sa-cell-strong">${escapeHtmlPublic(c.adminName)}</div>
+             ${c.adminEmail ? `<div class="sa-cell-sub">${escapeHtmlPublic(c.adminEmail)}</div>` : ""}`
+          : '<span class="sa-muted">Sin asignar</span>'
+      }
+    </td>
+    <td class="text-right">
+      <div class="sa-row-actions">
+        <a class="btn btn-outline btn-sm" href="?c=${c.code}" target="_blank">Ver</a>
+        <button class="btn btn-ghost btn-sm" onclick="saOpenClassForm(null, '${c.code}')" title="Editar">${ICONS_SA.pencil}</button>
+        <button class="btn btn-ghost btn-sm" onclick="saOpenResetPin('${c.code}')" title="Resetear PIN">${ICONS_SA.key}</button>
+        <button class="btn btn-ghost btn-sm sa-danger-btn" onclick="saOpenDeleteClass('${c.code}')" title="Eliminar">${ICONS_SA.trash}</button>
+      </div>
+    </td>
+  </tr>`;
 }
 
 // ============================================================
 // MODAL: CREAR / EDITAR COLEGIO
 // ============================================================
-
 function saOpenSchoolForm(schoolId = null) {
   const school = schoolId ? superadminState.schools.find((s) => s.id === schoolId) : null;
   const isEditing = Boolean(school);
-
   const overlay = document.getElementById("sa-modal-overlay");
+
   overlay.innerHTML = `
     <div class="modal-container">
       <div class="modal">
         <button class="modal-close" onclick="saCloseModal()">${ICONS_SA.x}</button>
         <div class="modal-header" style="text-align: left;">
-          <h2 class="modal-title">${isEditing ? `${ICONS_SA.pencil} Editar colegio` : `${ICONS_SA.building} Crear colegio`}</h2>
-          <p class="modal-description">${isEditing ? "Modifica los datos del colegio." : "Registra un nuevo colegio para organizar sus clases."}</p>
+          <h2 class="modal-title">${
+            isEditing ? `${ICONS_SA.pencil} Editar colegio` : `${ICONS_SA.building} Crear colegio`
+          }</h2>
+          <p class="modal-description">${
+            isEditing ? "Modifica los datos del colegio." : "Registra un nuevo colegio para organizar sus clases."
+          }</p>
         </div>
         <div class="modal-body">
           <form id="sa-school-form">
             <div class="field">
               <label class="label" for="school-name">Nombre del colegio <span style="color: var(--rojo-600)">*</span></label>
-              <input class="input" type="text" id="school-name" placeholder="p. ej. CEIP Miguel Hernández" value="${school ? escapeHtmlPublic(school.name) : ""}" required maxlength="100" autofocus />
+              <input class="input" type="text" id="school-name" placeholder="p. ej. CEIP Miguel Hernández" value="${
+                school ? escapeHtmlPublic(school.name) : ""
+              }" required maxlength="100" autofocus />
             </div>
             <div class="field-row">
               <div class="field" style="margin-bottom: 0;">
                 <label class="label" for="school-city">Ciudad</label>
-                <input class="input" type="text" id="school-city" placeholder="p. ej. Madrid" value="${school ? escapeHtmlPublic(school.city || "") : ""}" maxlength="80" />
+                <input class="input" type="text" id="school-city" placeholder="p. ej. Madrid" value="${
+                  school ? escapeHtmlPublic(school.city || "") : ""
+                }" maxlength="80" />
               </div>
               <div class="field" style="margin-bottom: 0;">
                 <label class="label" for="school-address">Dirección</label>
-                <input class="input" type="text" id="school-address" placeholder="p. ej. C/ Mayor 12" value="${school ? escapeHtmlPublic(school.address || "") : ""}" maxlength="120" />
+                <input class="input" type="text" id="school-address" placeholder="p. ej. C/ Mayor 12" value="${
+                  school ? escapeHtmlPublic(school.address || "") : ""
+                }" maxlength="120" />
               </div>
             </div>
             <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
               <button type="button" class="btn btn-outline" onclick="saCloseModal()">Cancelar</button>
-              <button type="submit" class="btn btn-primary" id="sa-school-submit">${isEditing ? "Guardar cambios" : "Crear colegio"}</button>
+              <button type="submit" class="btn btn-primary" id="sa-school-submit">${
+                isEditing ? "Guardar cambios" : "Crear colegio"
+              }</button>
             </div>
           </form>
         </div>
@@ -1032,7 +1036,10 @@ function saOpenSchoolForm(schoolId = null) {
     const city = document.getElementById("school-city").value.trim();
     const address = document.getElementById("school-address").value.trim();
 
-    if (!name) { showToast("Falta el nombre", "Pon un nombre al colegio.", "error"); return; }
+    if (!name) {
+      showToast("Falta el nombre", "Pon un nombre al colegio.", "error");
+      return;
+    }
 
     const btn = document.getElementById("sa-school-submit");
     btn.disabled = true;
@@ -1058,20 +1065,24 @@ function saOpenSchoolForm(schoolId = null) {
 // ============================================================
 // MODAL: ELIMINAR COLEGIO
 // ============================================================
-
 async function saOpenDeleteSchool(schoolId) {
   const school = superadminState.schools.find((s) => s.id === schoolId);
   if (!school) return;
-  const numClasses = superadminState.classes.filter((c) => c.schoolId === schoolId).length;
 
+  const numClasses = superadminState.classes.filter((c) => c.schoolId === schoolId).length;
   const overlay = document.getElementById("sa-modal-overlay");
+
   overlay.innerHTML = `
     <div class="modal-container" style="max-width: 28rem;">
       <div class="modal">
         <div class="modal-header" style="text-align: left;">
           <h2 class="modal-title" style="color: var(--rojo-700);">${ICONS_SA.trash} Eliminar colegio</h2>
           <p class="modal-description">
-            Vas a eliminar el colegio <strong>${escapeHtmlPublic(school.name)}</strong>${numClasses > 0 ? ` y sus <strong>${numClasses} clase${numClasses !== 1 ? "s" : ""}</strong> con todos sus movimientos.` : "."}
+            Vas a eliminar el colegio <strong>${escapeHtmlPublic(school.name)}</strong>${
+    numClasses > 0
+      ? ` y sus <strong>${numClasses} clase${numClasses !== 1 ? "s" : ""}</strong> con todos sus movimientos.`
+      : "."
+  }
             <br>Esta acción <strong>no se puede deshacer</strong>.
           </p>
         </div>
@@ -1098,97 +1109,138 @@ async function saConfirmDeleteSchool(schoolId) {
 // ============================================================
 // MODAL: CREAR / EDITAR CLASE (CON RESPONSABLE Y PIN)
 // ============================================================
-
 function saOpenClassForm(schoolId = null, classCode = null) {
-  const existingClass = classCode ? superadminState.classes.find((c) => c.code === classCode) : null;
+  const existingClass = classCode
+    ? superadminState.classes.find((c) => c.code === classCode)
+    : null;
   const isEditing = Boolean(existingClass);
-
   const schools = superadminState.schools;
-  const currentSchoolId = schoolId || (existingClass && existingClass.schoolId) || (schools.length > 0 ? schools[0].id : "");
+  const currentSchoolId =
+    schoolId || (existingClass && existingClass.schoolId) || (schools.length > 0 ? schools[0].id : "");
 
   const overlay = document.getElementById("sa-modal-overlay");
+
   overlay.innerHTML = `
     <div class="modal-container" style="max-width: 32rem;">
       <div class="modal">
         <button class="modal-close" onclick="saCloseModal()">${ICONS_SA.x}</button>
         <div class="modal-header" style="text-align: left;">
-          <h2 class="modal-title">${isEditing ? `${ICONS_SA.pencil} Editar clase` : `${ICONS_SA.graduation} Crear clase`}</h2>
-          <p class="modal-description">${isEditing ? "Modifica los datos de la clase y del responsable." : "Crea una nueva clase y asigna un responsable. Se generará un código único."}</p>
+          <h2 class="modal-title">${
+            isEditing ? `${ICONS_SA.pencil} Editar clase` : `${ICONS_SA.graduation} Crear clase`
+          }</h2>
+          <p class="modal-description">${
+            isEditing
+              ? "Modifica los datos de la clase y del responsable."
+              : "Crea una nueva clase y asigna un responsable. Se generará un código único."
+          }</p>
         </div>
         <div class="modal-body">
           <form id="sa-class-form">
             <div class="field">
               <label class="label" for="class-name">Nombre de la clase <span style="color: var(--rojo-600)">*</span></label>
-              <input class="input" type="text" id="class-name" placeholder="p. ej. 5º A - 2025/2026" value="${existingClass ? escapeHtmlPublic(existingClass.name) : ""}" required maxlength="80" autofocus />
+              <input class="input" type="text" id="class-name" placeholder="p. ej. 5º A - 2025/2026" value="${
+                existingClass ? escapeHtmlPublic(existingClass.name) : ""
+              }" required maxlength="80" autofocus />
             </div>
 
             <div class="field">
               <label class="label" for="class-school">Colegio</label>
-              ${schools.length > 0 ? `
+              ${
+                schools.length > 0
+                  ? `
                 <select class="select" id="class-school">
                   <option value="">— Sin colegio —</option>
-                  ${schools.map((s) =>
-                    `<option value="${s.id}" ${currentSchoolId === s.id ? "selected" : ""}>${escapeHtmlPublic(s.name)}</option>`
-                  ).join("")}
+                  ${schools
+                    .map(
+                      (s) =>
+                        `<option value="${s.id}" ${
+                          currentSchoolId === s.id ? "selected" : ""
+                        }>${escapeHtmlPublic(s.name)}</option>`
+                    )
+                    .join("")}
                 </select>
-              ` : `
-                <div class="sa-muted-box">No hay colegios. Crea uno primero o deja la clase sin colegio.</div>
-              `}
+              `
+                  : `<div class="sa-muted-box">No hay colegios. Crea uno primero o deja la clase sin colegio.</div>`
+              }
             </div>
 
             <div class="field-row">
               <div class="field" style="margin-bottom: 0;">
                 <label class="label" for="class-year">Curso escolar</label>
-                <input class="input" type="text" id="class-year" placeholder="2025-2026" value="${existingClass ? escapeHtmlPublic(existingClass.year || "") : "2025-2026"}" maxlength="20" />
+                <input class="input" type="text" id="class-year" placeholder="2025-2026" value="${
+                  existingClass ? escapeHtmlPublic(existingClass.year || "") : "2025-2026"
+                }" maxlength="20" />
               </div>
               <div class="field" style="margin-bottom: 0;">
                 <label class="label" for="class-currency">Moneda</label>
                 <select class="select" id="class-currency">
-                  ${Object.entries(MONEDAS).map(([code, sym]) =>
-                    `<option value="${code}" ${existingClass && existingClass.currency === code ? "selected" : (!existingClass && code === "EUR" ? "selected" : "")}>${code} (${sym})</option>`
-                  ).join("")}
+                  ${Object.entries(MONEDAS)
+                    .map(
+                      ([code, sym]) =>
+                        `<option value="${code}" ${
+                          existingClass && existingClass.currency === code
+                            ? "selected"
+                            : !existingClass && code === "EUR"
+                            ? "selected"
+                            : ""
+                        }>${code} (${sym})</option>`
+                    )
+                    .join("")}
                 </select>
               </div>
             </div>
 
-            ${!isEditing ? `
+            ${
+              !isEditing
+                ? `
               <div class="field">
                 <label class="label" for="class-opening">Saldo inicial (opcional)</label>
                 <input class="input" type="number" step="0.01" min="0" inputmode="decimal" id="class-opening" placeholder="0,00" />
               </div>
-            ` : ""}
+            `
+                : ""
+            }
 
             <div class="sa-form-section">
               <h3 class="sa-form-section-title">${ICONS_SA.user} Responsable de la clase</h3>
               <p class="sa-form-section-desc">La persona que gestionará los ingresos y gastos de esta clase con su PIN.</p>
-
               <div class="field-row">
                 <div class="field" style="margin-bottom: 0;">
                   <label class="label" for="admin-name">Nombre del responsable</label>
-                  <input class="input" type="text" id="admin-name" placeholder="p. ej. María (madre de Lucía)" value="${existingClass ? escapeHtmlPublic(existingClass.adminName || "") : ""}" maxlength="60" />
+                  <input class="input" type="text" id="admin-name" placeholder="p. ej. María (madre de Lucía)" value="${
+                    existingClass ? escapeHtmlPublic(existingClass.adminName || "") : ""
+                  }" maxlength="60" />
                 </div>
                 <div class="field" style="margin-bottom: 0;">
                   <label class="label" for="admin-email">Email del responsable</label>
-                  <input class="input" type="email" id="admin-email" placeholder="maria@example.com" value="${existingClass ? escapeHtmlPublic(existingClass.adminEmail || "") : ""}" maxlength="120" />
+                  <input class="input" type="email" id="admin-email" placeholder="maria@example.com" value="${
+                    existingClass ? escapeHtmlPublic(existingClass.adminEmail || "") : ""
+                  }" maxlength="120" />
                 </div>
               </div>
 
-              ${!isEditing ? `
+              ${
+                !isEditing
+                  ? `
                 <div class="field" style="margin-bottom: 0; margin-top: 0.75rem;">
                   <label class="label" for="admin-pin">PIN del responsable <span style="color: var(--rojo-600)">*</span></label>
                   <input class="input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" id="admin-pin" placeholder="4-8 dígitos numéricos" required />
                   <p class="sa-help-text">El responsable usará este PIN para entrar al modo admin y gestionar movimientos.</p>
                 </div>
-              ` : `
+              `
+                  : `
                 <div class="sa-info-box" style="margin-top: 0.75rem;">
                   ${ICONS_SA.info} El PIN del responsable no se muestra por seguridad. Para cambiarlo, usa el botón "Resetear PIN" en la lista de clases.
                 </div>
-              `}
+              `
+              }
             </div>
 
             <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
               <button type="button" class="btn btn-outline" onclick="saCloseModal()">Cancelar</button>
-              <button type="submit" class="btn btn-primary" id="sa-class-submit">${isEditing ? "Guardar cambios" : "Crear clase"}</button>
+              <button type="submit" class="btn btn-primary" id="sa-class-submit">${
+                isEditing ? "Guardar cambios" : "Crear clase"
+              }</button>
             </div>
           </form>
         </div>
@@ -1208,7 +1260,9 @@ function saOpenClassForm(schoolId = null, classCode = null) {
   document.getElementById("sa-class-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = document.getElementById("class-name").value.trim();
-    const schoolIdValue = document.getElementById("class-school") ? document.getElementById("class-school").value : null;
+    const schoolIdValue = document.getElementById("class-school")
+      ? document.getElementById("class-school").value
+      : null;
     const year = document.getElementById("class-year").value.trim();
     const currency = document.getElementById("class-currency").value;
     const adminName = document.getElementById("admin-name").value.trim();
@@ -1216,7 +1270,11 @@ function saOpenClassForm(schoolId = null, classCode = null) {
     const opening = document.getElementById("class-opening");
     const adminPin = pinInput ? pinInput.value : "";
 
-    if (!name) { showToast("Falta el nombre", "Pon un nombre a la clase.", "error"); return; }
+    if (!name) {
+      showToast("Falta el nombre", "Pon un nombre a la clase.", "error");
+      return;
+    }
+
     if (!isEditing && (!adminPin || adminPin.length < 4)) {
       showToast("PIN inválido", "El PIN debe tener al menos 4 dígitos.", "error");
       return;
@@ -1228,23 +1286,29 @@ function saOpenClassForm(schoolId = null, classCode = null) {
 
     try {
       if (isEditing) {
-        // Buscar nombre del colegio
         let schoolName = null;
         if (schoolIdValue) {
           const sch = schools.find((s) => s.id === schoolIdValue);
           if (sch) schoolName = sch.name;
         }
         await updateClassAsSuperadmin(classCode, {
-          name, schoolId: schoolIdValue || null, schoolName,
-          year: year || null, currency,
-          adminName: adminName || null, adminEmail: adminEmail || null,
+          name,
+          schoolId: schoolIdValue || null,
+          schoolName,
+          year: year || null,
+          currency,
+          adminName: adminName || null,
+          adminEmail: adminEmail || null,
         });
         showToast("Clase actualizada", name);
       } else {
         const newClass = await createClassAsSuperadmin({
-          name, schoolId: schoolIdValue || null,
-          year, currency,
-          adminName: adminName || null, adminEmail: adminEmail || null,
+          name,
+          schoolId: schoolIdValue || null,
+          year,
+          currency,
+          adminName: adminName || null,
+          adminEmail: adminEmail || null,
           openingBalance: opening ? parseFloat(opening.value.replace(",", ".")) : 0,
           adminPin,
         });
@@ -1262,7 +1326,6 @@ function saOpenClassForm(schoolId = null, classCode = null) {
 // ============================================================
 // MODAL: ELIMINAR CLASE
 // ============================================================
-
 function saOpenDeleteClass(classCode) {
   const cls = superadminState.classes.find((c) => c.code === classCode);
   if (!cls) return;
@@ -1274,7 +1337,9 @@ function saOpenDeleteClass(classCode) {
         <div class="modal-header" style="text-align: left;">
           <h2 class="modal-title" style="color: var(--rojo-700);">${ICONS_SA.trash} Eliminar clase</h2>
           <p class="modal-description">
-            Vas a eliminar la clase <strong>${escapeHtmlPublic(cls.name)}</strong> (${cls.code})${cls.schoolName ? ` del colegio <strong>${escapeHtmlPublic(cls.schoolName)}</strong>` : ""} con todos sus movimientos registrados.
+            Vas a eliminar la clase <strong>${escapeHtmlPublic(cls.name)}</strong> (${cls.code})${
+    cls.schoolName ? ` del colegio <strong>${escapeHtmlPublic(cls.schoolName)}</strong>` : ""
+  } con todos sus movimientos registrados.
             <br>Esta acción <strong>no se puede deshacer</strong>.
           </p>
         </div>
@@ -1301,7 +1366,6 @@ async function saConfirmDeleteClass(classCode) {
 // ============================================================
 // MODAL: RESETEAR PIN DE UNA CLASE
 // ============================================================
-
 function saOpenResetPin(classCode) {
   const cls = superadminState.classes.find((c) => c.code === classCode);
   if (!cls) return;
@@ -1314,7 +1378,8 @@ function saOpenResetPin(classCode) {
         <div class="modal-header" style="text-align: left;">
           <h2 class="modal-title">${ICONS_SA.key} Resetear PIN de la clase</h2>
           <p class="modal-description">
-            Asigna un nuevo PIN para la clase <strong>${escapeHtmlPublic(cls.name)}</strong> (${cls.code}). El responsable deberá usar este nuevo PIN para acceder al panel de administrador.
+            Asigna un nuevo PIN para la clase <strong>${escapeHtmlPublic(cls.name)}</strong> (${cls.code}).
+            El responsable deberá usar este nuevo PIN para acceder al panel de administrador.
           </p>
         </div>
         <div class="modal-body">
@@ -1346,7 +1411,6 @@ function saOpenResetPin(classCode) {
       showToast("PIN demasiado corto", "Debe tener al menos 4 dígitos.", "error");
       return;
     }
-
     try {
       await resetClassPin(classCode, newPin);
       showToast("PIN actualizado", `Clase ${classCode}: nuevo PIN guardado.`);
@@ -1360,7 +1424,6 @@ function saOpenResetPin(classCode) {
 // ============================================================
 // MODAL: CAMBIAR CONTRASEÑA DEL SUPERADMIN
 // ============================================================
-
 function saOpenChangePassword() {
   const overlay = document.getElementById("sa-modal-overlay");
   overlay.innerHTML = `
@@ -1402,8 +1465,14 @@ function saOpenChangePassword() {
     const newPass = document.getElementById("new-pass").value;
     const newPass2 = document.getElementById("new-pass2").value;
 
-    if (newPass.length < 6) { showToast("Demasiado corta", "La nueva contraseña debe tener al menos 6 caracteres.", "error"); return; }
-    if (newPass !== newPass2) { showToast("No coinciden", "Las contraseñas nuevas no coinciden.", "error"); return; }
+    if (newPass.length < 6) {
+      showToast("Demasiado corta", "La nueva contraseña debe tener al menos 6 caracteres.", "error");
+      return;
+    }
+    if (newPass !== newPass2) {
+      showToast("No coinciden", "Las contraseñas nuevas no coinciden.", "error");
+      return;
+    }
 
     try {
       await changeSuperadminPassword(oldPass, newPass);
@@ -1418,7 +1487,6 @@ function saOpenChangePassword() {
 // ============================================================
 // HELPERS Y NAVEGACIÓN
 // ============================================================
-
 function escapeHtmlPublic(str) {
   if (!str) return "";
   return String(str)
@@ -1467,7 +1535,6 @@ async function saLogout() {
 // ============================================================
 // ICONOS DEL SUPERADMIN
 // ============================================================
-
 const ICONS_SA = {
   shield: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1Z"/><path d="m9 12 2 2 4-4"/></svg>`,
   key: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>`,
@@ -1489,13 +1556,22 @@ const ICONS_SA = {
 // ============================================================
 // INICIALIZACIÓN DEL SUPERADMIN
 // ============================================================
-// Esta función la llama app.js cuando la URL tiene ?superadmin=1
 async function initSuperadmin() {
   // Hacer accesibles las funciones para onclick
   Object.assign(window, {
-    saOpenSchoolForm, saOpenClassForm, saOpenDeleteSchool, saConfirmDeleteSchool,
-    saOpenDeleteClass, saConfirmDeleteClass, saOpenResetPin, saOpenChangePassword,
-    saCloseModal, saGoDashboard, saGoSchools, saGoAllClasses, saGoSchoolClasses,
+    saOpenSchoolForm,
+    saOpenClassForm,
+    saOpenDeleteSchool,
+    saConfirmDeleteSchool,
+    saOpenDeleteClass,
+    saConfirmDeleteClass,
+    saOpenResetPin,
+    saOpenChangePassword,
+    saCloseModal,
+    saGoDashboard,
+    saGoSchools,
+    saGoAllClasses,
+    saGoSchoolClasses,
     saLogout,
   });
 
